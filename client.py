@@ -2,7 +2,7 @@ import asyncio, websockets, requests, json, base64
 
 # куда прокидываем (Angular dev server, FastAPI и т.д.)
 TARGET = "http://localhost:4200"
-WS_URL = "wss://<ТВОЙ-FQDN>.azurecontainerapps.io/ws/dev"  # замени на свой
+WS_URL = "wss://test.delightfulsand-56d77f44.eastus.azurecontainerapps.io/ws"  # замени на свой
 
 def _filter_req_headers(h: dict) -> dict:
     drop = {"host", "content-length", "connection", "accept-encoding"}

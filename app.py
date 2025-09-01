@@ -1,9 +1,10 @@
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import Response, JSONResponse
 import asyncio, json, base64, uuid, logging
-from typing import Dict
+from typing import Dict, Optional
 
 app = FastAPI()
+
 
 class Client:
     def __init__(self, ws: WebSocket):
@@ -11,21 +12,23 @@ class Client:
         # ожидания ответов по конкретным запросам: req_id -> Future
         self.pending: Dict[str, asyncio.Future] = {}
 
-clients: Dict[str, Client] = {}
+
+# один активный клиент
+client: Optional[Client] = None
 
 
 @app.get("/")
 async def health():
-    return {"ok": True, "clients": list(clients.keys())}
+    return {"ok": True, "client_connected": client is not None}
 
 
-@app.websocket("/ws/{client_id}")
-async def websocket_endpoint(ws: WebSocket, client_id: str):
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    global client
     await ws.accept()
     client = Client(ws)
-    clients[client_id] = client
     try:
-        # единственное место, где мы читаем из сокета!
+        # читаем из сокета только тут
         while True:
             msg = await ws.receive_text()
             try:
@@ -33,17 +36,19 @@ async def websocket_endpoint(ws: WebSocket, client_id: str):
             except Exception:
                 continue
             req_id = payload.get("id")
+            if not req_id:
+                continue
             fut = client.pending.pop(req_id, None)
             if fut and not fut.done():
                 fut.set_result(payload)
     except Exception as e:
         logging.exception("WebSocket closed: %s", e)
     finally:
-        clients.pop(client_id, None)
+        client = None
 
 
 def _filter_resp_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    # hop-by-hop заголовки отбрасываем
+    # hop-by-hop заголовки убираем
     drop = {
         "content-length", "transfer-encoding", "connection", "keep-alive",
         "proxy-authenticate", "proxy-authorization", "te", "trailer", "upgrade"
@@ -51,10 +56,10 @@ def _filter_resp_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in drop}
 
 
-@app.api_route("/{client_id}/{path:path}",
+@app.api_route("/{path:path}",
                methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
-async def proxy(client_id: str, path: str, request: Request):
-    client = clients.get(client_id)
+async def proxy(path: str, request: Request):
+    global client
     if not client:
         return JSONResponse({"error": "Client not connected"}, status_code=502)
 
